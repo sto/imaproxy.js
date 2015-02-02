@@ -81,7 +81,7 @@ function IMAProxy(config)
             if (str.match(/COMPRESS=DEFLATE/)) {
                 event.result = str.replace("COMPRESS=DEFLATE ", "");
             }
-            if (str.match(/ (SORT|ANNOTATEMORE)/)) {
+            if (str.match(/ (SORT|ANNOTATEMORE|METADATA)/)) {
                 event.state.capabilities = true;
             }
         });
@@ -89,7 +89,7 @@ function IMAProxy(config)
         serverEmitter.on('OK', function(event, data){
             if (!event.state.capabilities) {
                 var str = data.toString();
-                if (str.match(/\[CAPABILITY\s/) && str.match(/\s(SORT|ANNOTATEMORE)/)) {
+                if (str.match(/\[CAPABILITY\s/) && str.match(/\s(SORT|ANNOTATEMORE|METADATA)/)) {
                     if (str.match(/COMPRESS=DEFLATE/)) {
                         event.result = str.replace("COMPRESS=DEFLATE ", "");
                     }

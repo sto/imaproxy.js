@@ -61,7 +61,7 @@ function Mailonly(proxy)
         var response = imap.parseResponse(data);
         if (response.lines[0].match(/\[CAPABILITY\s/)) {
             parseCapabilities(response.lines[0].replace(/\sOK/, '').replace(/\[|\]/i, ''));
-            if (capabilities['SORT'] || capabilities['ANNOTATEMORE']) {
+            if (capabilities['SORT'] || capabilities['ANNOTATEMORE'] || capabilities['METADATA']) {
                 proxy.serverEmitter.removeListener('OK', OKResponse);
             }
         }
@@ -98,7 +98,7 @@ function Mailonly(proxy)
     function clientList(event, data)
     {
         // nothing to do here
-        if (!capabilities['ANNOTATEMORE']) {
+        if (!capabilities['ANNOTATEMORE'] && !capabilities['METADATA']) {
             proxy.clientEmitter.removeListener('LSUB', clientList);
             proxy.clientEmitter.removeListener('LIST', clientList);
             proxy.clientEmitter.removeListener('XLIST', clientList);
@@ -142,7 +142,7 @@ function Mailonly(proxy)
             last = response.lines.pop();
 
             // GETANNOTATION completed
-            if (response.seq && req.listings[response.seq]) {
+            if (response.seq && req.listings[response.seq] && capabilities['ANNOTATEMORE']) {
                 var i, ann, values, lines = (req.buffer + data.toString()).trim().split(/\r?\n/);
                 for (i=0; i < lines.length; i++) {
                     ann = imap.tokenizeData(lines[i], 5);
@@ -155,6 +155,152 @@ function Mailonly(proxy)
                     // store folder type in global (per-connection) memory for subsequent requests (e.g. XLIST + LSUB)
                     if (ann[1] === 'ANNOTATION' && ann[3] === TYPE_ANNOTATION && values.length) {
                         metadata[id][ann[2]] = (values[1] || values[3] || '').replace(/\..+$/, '');
+                    }
+                }
+
+                // clear buffer
+                req.buffer = '';
+
+                // filter buffered listing and send it to client
+                sendFilteredList(id, response.seq, event);
+            }
+            // GETMETADATA completed
+            else if (response.seq && req.listings[response.seq] && capabilities['METADATA']) {
+                var MD_PREFIX = '* METADATA ';
+                var i, j, lines = (req.buffer + data.toString()).trim().split(/\r?\n/);
+
+//              console.log('BEG PROCESS METADATA');
+//              console.log(lines.join('\n'));
+//              console.log('END PROCESS METADATA');
+
+                for (i=0; i < lines.length; i++) {
+                    var line = lines[i];
+
+                    // Skip non metadata lines
+                    if (line.substring(0, MD_PREFIX.length) !== MD_PREFIX)
+                        continue;
+
+                    // folder, entries and values
+                    var folder, entry, entries = [];
+
+                    // token related variables
+                    var tbeg, tend, tsep, eol;
+
+                    // First find the foldername
+                    folder = '';
+                    tbeg = MD_PREFIX.length;
+
+                    // No folder name, ignore the line
+                    if (tbeg >= line.length) continue;
+
+                    // See if the name is quoted
+                    if (line[tbeg] === '"') {
+                        tsep = '"'; tbeg++;
+                    } else {
+                        tsep = ' ';
+                    }
+                    tend = tbeg;
+                    while (tend < line.length) {
+                        if (line[tend] === '\\') {
+                            tend++;
+                        } else if (line[tend] === tsep) {
+                            folder = line.substring(tbeg, tend);
+//                          console.log("Found folder '" + folder + "'");
+                            tbeg = tend + 1;
+                            break;
+                        }
+                        tend++;
+                    }
+
+                    // Move to the beginning of the entry definitions
+                    if (tsep === '"') tbeg++;
+
+                    // No entry name, ignore the line
+                    if (tbeg >= line.length) continue;
+
+                    if (line[tbeg] === '(') {
+                        eol = ')'; tbeg++;
+                        if (tbeg >= line.length) continue;
+                    } else {
+                        eol = '';
+                    }
+
+                    // Find entry names and values
+                    tend = tbeg;
+                    while (tend < line.length && line[tend] !== eol) {
+                        while (tend < line.length) {
+                            if (line[tend] === ' ') {
+                                entry = line.substring(tbeg, tend);
+//                              console.log("Found entry '" + entry + "'");
+                                tend++;
+                                tbeg = tend;
+                                break;
+                            }
+                            tend++;
+                        }
+
+                        // No entry value, ignore the line
+                        if (tbeg >= line.length) break;
+
+                        // Value can be a string or an integer between { and }
+                        tend = tbeg;
+//                      console.log('line[tend (' + tend + ')] = ' + line[tend]);
+                        if (line[tend] === '{') {
+                            tend++;
+                            tbeg = tend;
+                            while (tend < line.length) {
+                                if (line[tend] === '}') {
+                                    var vlen = parseInt(line.substring(tbeg, tend));
+//                                  console.log('vlen string = ' + line.substring(tbeg, tend) + '; vlen = ' + vlen);
+                                    tend++;
+                                    tbeg = tend;
+                                    if (tend === line.length) {
+                                        i++;
+                                        // Wrong value, skip line again
+                                        if (i >= lines.length) break;
+                                        // get the value from the next line
+                                        line = lines[i];
+                                        tbeg = 0;
+                                        tend = vlen;
+                                    } else {
+                                        tend = tbeg + vlen;
+                                    }
+//                                  console.log("Entry '" + entry + "' value = '" + line.substring(tbeg,tend) + "'");
+                                    entries.push([ entry, line.substring(tbeg, tend) ]);
+                                    tend++;
+                                    tbeg = tend;
+                                    break;
+                                }
+                                tend++;
+                            }
+                        } else {
+                           tbeg = tend;
+                           while (tend < line.length) {
+                               if (line[tend] === ' ' || line[tend] === eol) {
+//                                  console.log("Entry '" + entry + "' value = '" + line.substring(tbeg,tend) + "'");
+                                    entries.push([ entry, line.substring(tbeg, tend) ]);
+                                    tend++;
+                                    tbeg = tend;
+                                    break;
+                               }
+                               tend++;
+                           }
+                        }
+                    }
+//                  console.log("ENTRIES = '" + entries + "'");
+                    if (metadata[id] === undefined) {
+                        metadata[id] = {};
+                    }
+                    for (j=0; j < entries.length; j++) {
+                        if (entries[j][0] === '/private' + TYPE_ANNOTATION || entries[j][0] === '/shared' + TYPE_ANNOTATION) {
+                            if (entries[j][1] !== 'NIL') {
+                                metadata[id][folder] = entries[j][1].replace(/\..+$/, '');
+                            } else {
+                                metadata[id][folder] = '';
+                            }
+//                          console.log("Folder '" + folder + "' metadata = '" + metadata[id][folder] + "'");
+                            break;
+                        }
                     }
                 }
 
@@ -210,10 +356,15 @@ function Mailonly(proxy)
         if (metadata[id]) {
             sendFilteredList(id, 'A' + seq, event);
         }
-        else {
+        else if (capabilities['ANNOTATEMORE']) {
             // fetch all folder annotations in one go
             metadata[id] = {};
             event.server.write('A' + seq + ' GETANNOTATION "*" "' + TYPE_ANNOTATION + '" ("value.priv" "value.shared")\r\n');
+        }
+        else {
+            // fetch all folder metadata in one go
+            metadata[id] = {};
+            event.server.write('A' + seq + ' GETMETADATA "*" (/private' + TYPE_ANNOTATION + ' /shared' + TYPE_ANNOTATION +')\r\n');
         }
 
         return true;
