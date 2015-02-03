@@ -292,14 +292,15 @@ function Mailonly(proxy)
                         metadata[id] = {};
                     }
                     for (j=0; j < entries.length; j++) {
-                        if (entries[j][0] === '/private' + TYPE_ANNOTATION || entries[j][0] === '/shared' + TYPE_ANNOTATION) {
-                            if (entries[j][1] !== 'NIL') {
-                                metadata[id][folder] = entries[j][1].replace(/\..+$/, '');
+                        if (entries[j][0] === '/private' + TYPE_ANNOTATION
+						    || entries[j][0] === '/shared' + TYPE_ANNOTATION) {
+                            if (entries[j][1] === 'NIL') {
+                                metadata[id][folder] = 'NIL';
                             } else {
-                                metadata[id][folder] = '';
+                                metadata[id][folder] = entries[j][1].replace(/\..+$/, '');
+//                              console.log("Folder '" + folder + "' metadata = '" + metadata[id][folder] + "'");
+                                break;
                             }
-//                          console.log("Folder '" + folder + "' metadata = '" + metadata[id][folder] + "'");
-                            break;
                         }
                     }
                 }
