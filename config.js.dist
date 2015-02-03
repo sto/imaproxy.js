@@ -31,6 +31,9 @@ module.exports = {
     conn_log: true,
 
     // enable IMAP debug logging
-    debug_log:   true
+    debug_log: true,
+
+    // use colors when logging or not
+    use_colors: true,
 
 };

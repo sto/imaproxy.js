@@ -35,6 +35,12 @@ function IMAPLog(proxy)
     var DEBUG_LOG   = false;
     var DATA_LOG    = false;
 
+    if (!proxy.config.use_colors) {
+        GREEN_CCODE = '';
+        RED_CCODE   = '';
+        WHITE_CCODE = '';
+    }
+
     // public methods
     this.init = init;
 

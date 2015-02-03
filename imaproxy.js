@@ -56,6 +56,11 @@ function IMAProxy(config)
     this.serverEmitter = serverEmitter;
     this.config = config;
 
+    // adjust colors
+    if (!config.use_colors) {
+         WHITE_CCODE = '';
+    }
+
     // public methods
     this.start = start;
 
