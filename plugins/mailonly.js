@@ -354,7 +354,7 @@ function Mailonly(proxy)
         }
 
         // we already collected all annotations, send the (filtered) response to the client
-        if (metadata[id]) {
+        if (metadata[id] !== undefined && metadata[id] !== {}) {
             sendFilteredList(id, 'A' + seq, event);
         }
         else if (capabilities['ANNOTATEMORE']) {
@@ -384,6 +384,8 @@ function Mailonly(proxy)
             for (i=0; i < listing.buffer.length; i++) {
                 rec = imap.tokenizeData(listing.buffer[i]);
                 mbox = rec.pop();
+                // Don't show folders under the shared namespace
+                if (mbox.match(/^shared($|\/)/)) continue;
                 type = metadata[id][mbox];
 
                 if (!type || type === 'mail' || type === 'NIL') {
