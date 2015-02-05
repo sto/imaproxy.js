@@ -36,4 +36,10 @@ module.exports = {
     // use colors when logging or not
     use_colors: true,
 
+    // folder hide regexp
+    // remove the parameter or set it to null if not needed
+    // the following value hides folders under the '/shared' namespace, as
+    // they are not handled OK from some clients
+    folder_hide_regexp: /^shared($|\/)/,
+
 };

@@ -293,7 +293,7 @@ function Mailonly(proxy)
                     }
                     for (j=0; j < entries.length; j++) {
                         if (entries[j][0] === '/private' + TYPE_ANNOTATION
-						    || entries[j][0] === '/shared' + TYPE_ANNOTATION) {
+                            || entries[j][0] === '/shared' + TYPE_ANNOTATION) {
                             if (entries[j][1] === 'NIL') {
                                 metadata[id][folder] = 'NIL';
                             } else {
@@ -379,13 +379,16 @@ function Mailonly(proxy)
         var req, listing;
         if ((req = proc[id]) && (listing = req.listings[seq])) {
             proxy.config.debug_log && console.log("Mailonly filter:", listing.buffer, metadata[id]);
-
+            var hide_regex = null;
+            if (proxy.config.folder_hide_regexp) {
+                 hide_regex = proxy.config.folder_hide_regexp;
+            }
             var i, rec, mbox, type, list = [];
             for (i=0; i < listing.buffer.length; i++) {
                 rec = imap.tokenizeData(listing.buffer[i]);
                 mbox = rec.pop();
-                // Don't show folders under the shared namespace
-                if (mbox.match(/^shared($|\/)/)) continue;
+                // Don't show folders that match the given regex
+                if (hide_regex && mbox.match(hide_regex)) continue;
                 type = metadata[id][mbox];
 
                 if (!type || type === 'mail' || type === 'NIL') {
