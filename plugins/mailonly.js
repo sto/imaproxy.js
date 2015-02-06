@@ -384,16 +384,26 @@ function Mailonly(proxy)
                  hide_regex = proxy.config.folder_hide_regexp;
             }
             var i, rec, mbox, type, list = [];
+            var pfiltered = false;
             for (i=0; i < listing.buffer.length; i++) {
                 rec = imap.tokenizeData(listing.buffer[i]);
-                mbox = rec.pop();
-                // Don't show folders that match the given regex
-                if (hide_regex && mbox.match(hide_regex)) continue;
-                type = metadata[id][mbox];
-
-                if (!type || type === 'mail' || type === 'NIL') {
-                    list.push(listing.buffer[i]);
+                // Check LIST & LSUB responses and ignore STATUS if mailbox was
+                // filtered (to support LIST-STATUS extension)
+                if (rec[0] === '*') {
+                    if (rec[1] === 'LIST' || rec[1] === 'LSUB') {
+                        mbox = rec.pop();
+                        // Don't show folders that match the given regex
+                        if (hide_regex && mbox.match(hide_regex)) continue;
+                        type = metadata[id][mbox];
+                        if (type && type !== 'mail' && type !== 'NIL') {
+                            pfiltered = true; continue;
+                        }
+                    } else if (rec[1] === 'STATUS' && pfiltered) {
+                        pfiltered = false; continue;
+                    }
                 }
+                pfiltered = false;
+                list.push(listing.buffer[i]);
             }
 
             // send filtered list as response to the client
