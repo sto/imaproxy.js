@@ -27,6 +27,16 @@
 
 "use strict";
 
+// Add ISO timestamps to console.log messages
+var log = console.log;
+console.log = function(){
+  var slice = Array.prototype.slice,
+      args = slice.call(arguments),
+      msg = args.shift();
+  args.unshift('[' + new Date().toISOString() + '] ' + msg);
+  log.apply(console, args);
+};
+
 var fs = require("fs"),
     tls = require("tls"),
     net = require("net"),
