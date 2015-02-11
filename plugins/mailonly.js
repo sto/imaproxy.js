@@ -169,10 +169,6 @@ function Mailonly(proxy)
                 var MD_PREFIX = '* METADATA ';
                 var i, j, lines = (req.buffer + data.toString()).trim().split(/\r?\n/);
 
-//              console.log('BEG PROCESS METADATA');
-//              console.log(lines.join('\n'));
-//              console.log('END PROCESS METADATA');
-
                 for (i=0; i < lines.length; i++) {
                     var line = lines[i];
 
@@ -205,7 +201,6 @@ function Mailonly(proxy)
                             tend++;
                         } else if (line[tend] === tsep) {
                             folder = line.substring(tbeg, tend);
-//                          console.log("Found folder '" + folder + "'");
                             tbeg = tend + 1;
                             break;
                         }
@@ -231,7 +226,6 @@ function Mailonly(proxy)
                         while (tend < line.length) {
                             if (line[tend] === ' ') {
                                 entry = line.substring(tbeg, tend);
-//                              console.log("Found entry '" + entry + "'");
                                 tend++;
                                 tbeg = tend;
                                 break;
@@ -244,14 +238,12 @@ function Mailonly(proxy)
 
                         // Value can be a string or an integer between { and }
                         tend = tbeg;
-//                      console.log('line[tend (' + tend + ')] = ' + line[tend]);
                         if (line[tend] === '{') {
                             tend++;
                             tbeg = tend;
                             while (tend < line.length) {
                                 if (line[tend] === '}') {
                                     var vlen = parseInt(line.substring(tbeg, tend));
-//                                  console.log('vlen string = ' + line.substring(tbeg, tend) + '; vlen = ' + vlen);
                                     tend++;
                                     tbeg = tend;
                                     if (tend === line.length) {
@@ -265,7 +257,6 @@ function Mailonly(proxy)
                                     } else {
                                         tend = tbeg + vlen;
                                     }
-//                                  console.log("Entry '" + entry + "' value = '" + line.substring(tbeg,tend) + "'");
                                     entries.push([ entry, line.substring(tbeg, tend) ]);
                                     tend++;
                                     tbeg = tend;
@@ -277,7 +268,6 @@ function Mailonly(proxy)
                            tbeg = tend;
                            while (tend < line.length) {
                                if (line[tend] === ' ' || line[tend] === eol) {
-//                                  console.log("Entry '" + entry + "' value = '" + line.substring(tbeg,tend) + "'");
                                     entries.push([ entry, line.substring(tbeg, tend) ]);
                                     tend++;
                                     tbeg = tend;
@@ -287,7 +277,6 @@ function Mailonly(proxy)
                            }
                         }
                     }
-//                  console.log("ENTRIES = '" + entries + "'");
                     if (metadata[id] === undefined) {
                         metadata[id] = {};
                     }
@@ -298,7 +287,6 @@ function Mailonly(proxy)
                                 metadata[id][folder] = 'NIL';
                             } else {
                                 metadata[id][folder] = entries[j][1].replace(/\..+$/, '');
-//                              console.log("Folder '" + folder + "' metadata = '" + metadata[id][folder] + "'");
                                 break;
                             }
                         }
