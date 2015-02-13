@@ -301,7 +301,14 @@ function IMAProxy(config)
             server = net.createServer(clientListener);
         }
 
+        this.server = server;
         server.listen(config.bind_port, function() {
+            if (config.user_gid) {
+                process.setgid(config.user_gid);
+            }
+            if (config.user_uid) {
+                process.setuid(config.user_uid);
+            }
             console.log(WHITE_CCODE + "* IMAP proxy" + (cluster.isWorker ? " (" + cluster.worker.id + ")" : '') + " is listening on port " + config.bind_port);
         });
     }
@@ -357,11 +364,20 @@ if (cluster.isMaster && config.workers) {
     cluster.fork();
   }
 
+  var maxWorkerCrashes = 10;
+
   cluster.on('exit', function(worker, code, signal) {
     if (code !== 0) {
         // restart a crashed child process
-        console.warn("* Worker %d (PID=%s) died with code %d. Restarting...", worker.id, worker.process.pid, code);
-        cluster.fork();
+        maxWorkerCrashes--;
+        if (maxWorkerCrashes <= 0) {
+            console.error('Too many worker crashes');
+            // kill the cluster, let supervisor restart it
+            process.exit(1);
+        } else {
+            console.warn("* Worker %d (PID=%s) died with code %d. Restarting...", worker.id, worker.process.pid, code);
+            cluster.fork();
+        }
     }
     else {
         console.log("Worker %d (PID=%s) exited with signal %s", worker.id, worker.process.pid, signal);
@@ -373,3 +389,29 @@ else {
     proxy.start();
 }
 
+// this function is called when you want the server to die gracefully
+// i.e. wait for existing connections
+var gracefulShutdown = function() {
+    console.log("Received kill signal, shutting down.");
+    if (!(cluster.isMaster && config.workers) && proxy.server) {
+        proxy.server.close(function() {
+            console.log("Closed out remaining connections.");
+            process.exit()
+        });
+    }
+    else {
+        process.exit(); 
+    }
+  
+    // if after 
+    setTimeout(function() {
+        console.error("Could not close connections in time, forcefully shutting down");
+        process.exit()
+    }, 10*1000);
+}
+
+// listen for TERM signal .e.g. kill 
+process.on ('SIGTERM', gracefulShutdown);
+
+// listen for INT signal e.g. Ctrl-C
+process.on ('SIGINT', gracefulShutdown);   

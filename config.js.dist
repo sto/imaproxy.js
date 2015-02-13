@@ -42,4 +42,7 @@ module.exports = {
     // they are not handled OK from some clients
     folder_hide_regexp: /^shared($|\/)/,
 
+    // Efective user & group
+    user_gid: 'root',
+    user_uid: 'root',
 };
