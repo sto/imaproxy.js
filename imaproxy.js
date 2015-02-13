@@ -187,19 +187,26 @@ function IMAProxy(config)
         });
 
         connectionToClient.on("error", function(e){
-            console.error(WHITE_CCODE + prefix + "* Client connection error!", e);
-            if (state.isConnected) {
-                connectionToServer.end();
-                connections--;
-            }
-        });
-
-        connectionToClient.on("close", function(){
-            CONN_LOG && console.log(WHITE_CCODE + prefix + "* Client connection closed");
             if (state.isConnected) {
                 state.isConnected = false;
                 connectionToServer.end();
                 connections--;
+                console.error(WHITE_CCODE + prefix + "* Client connection error!; open connections: %d;", connections, e);
+            }
+            else {
+                console.error(WHITE_CCODE + prefix + "* Client connection error!", e);
+            }
+        });
+
+        connectionToClient.on("close", function(){
+            if (state.isConnected) {
+                state.isConnected = false;
+                connectionToServer.end();
+                connections--;
+                CONN_LOG && console.log(WHITE_CCODE + prefix + "* Client connection closed; open connections: %d", connections);
+            }
+            else {
+                CONN_LOG && console.log(WHITE_CCODE + prefix + "* Client connection closed");
             }
             clientEmitter.emit('__DISCONNECT__', extend_event({}));
         });
@@ -262,11 +269,14 @@ function IMAProxy(config)
         });
 
         connectionToServer.on("close", function(){
-            CONN_LOG && console.log(WHITE_CCODE + prefix + "* Disconnected from " + imap_server.hostname);
             if (state.isConnected) {
                 state.isConnected = false;
                 connectionToClient.end();
                 connections--;
+                CONN_LOG && console.log(WHITE_CCODE + prefix + "* Disconnected from " + imap_server.hostname + "; open connections: %d", connections);
+            }
+            else {
+                CONN_LOG && console.log(WHITE_CCODE + prefix + "* Disconnected from " + imap_server.hostname);
             }
             serverEmitter.emit('__DISCONNECT__', extend_event({}));
         });
