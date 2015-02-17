@@ -157,21 +157,57 @@ function IMAProxy(config)
         }
 
         connectionToClient.on("data", function(data) {
-            var cmd = parseIMAPCommand(data, client_buffer);
+            var cmd_data = client_buffer + data;
+            var lines = cmd_data.split(/\r?\n/);
+            var ndata = lines.shift();
+
+            // If the line ends with a '}' we have a multiline command
+            if (ndata.slice(-1) === '}') {
+                ndata = data.toString();
+                lines = '';
+            }
+            else {
+                // IMAP commands must end with CRLF
+                ndata += '\r\n';
+            }
+
+            // parse the line received
+            var cmd = parseIMAPCommand(ndata);
 
             // buffer short inputs leading to split tags (observed with Apple Mail)
             if (!cmd.write) {
                 client_buffer += data.toString();
                 return;
             }
-            if (client_buffer.length) {
+
+            // If we only have one command there are no lines left to process
+            if (lines.length === 1 && lines[0] === '') {
+                lines = '';
+            }
+
+            if (lines.length === 0) {
                 // concatenate buffered string with current data
-                data = Buffer.concat([new Buffer(client_buffer), data]);
+                if (client_buffer.length) {
+                    data = Buffer.concat([new Buffer(client_buffer), data]);
+                    client_buffer = '';
+                }
+            }
+            else {
+                // concatenate buffered string with current command
+                if (client_buffer.length) {
+                    data = Buffer.concat([new Buffer(client_buffer),
+                                          new Buffer(ndata)]);
+                }
+                else {
+                    data = new Buffer(ndata);
+                }
+                // we are going to emit a new event with the remaining lines
                 client_buffer = '';
             }
 
             // emit events with client data
             var event = extend_event(cmd);
+
             clientEmitter.emit(event.command, event, data);
             if (event.command !== '__DATA__') {
                 clientEmitter.emit('__DATA__', event, data);
@@ -183,6 +219,11 @@ function IMAProxy(config)
             }
             else if (event.write) {
                 connectionToServer.write(data);
+            }
+            // Emit remaining client commands (still unprocessed)
+            if (lines.length) {
+                data = new Buffer(lines.join('\r\n'));
+                connectionToClient.emit('data', data);
             }
         });
 
@@ -237,7 +278,7 @@ function IMAProxy(config)
                 return;
             }
 
-            var cmd = parseIMAPCommand(data, '');
+            var cmd = parseIMAPCommand(data);
             cmd.write = true;  // always send by default
 
             // emit events with server data
@@ -327,9 +368,9 @@ function IMAProxy(config)
      * Simple utility function to parse an IMAP command or response.
      * Extracts the actual command and the sequence number.
      */
-    function parseIMAPCommand(data, old_buffer)
+    function parseIMAPCommand(data)
     {
-        var str = old_buffer + data.toString('utf8', 0, 256),
+        var str = data.toString('utf8', 0, 256),
             lines = str.split(/\r?\n/),
             tokens = String(lines[0]).split(/ +/),
             cmd = { seq: 0, command: '__DATA__', write: true };
