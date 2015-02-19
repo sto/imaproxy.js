@@ -35,6 +35,7 @@ function Mailonly(proxy)
     var listening = false;
     var capabilities = {};
     var metadata = [];
+    var meta_req = [];
     var proc = [];
 
     // public methods
@@ -53,6 +54,31 @@ function Mailonly(proxy)
         proxy.serverEmitter.once('CAPABILITY', capabilityResponse);
     }
 
+    function requestMetadata(event, seq){
+        var id = event.state.ID;
+        // collect the anontations
+        if (metadata[id] === undefined || metadata[id] === {}) {
+            proxy.config.debug_log && console.log("requestMetadata for %s, seq = %s", event.command, seq);
+            if (capabilities['ANNOTATEMORE']) {
+                // fetch all folder annotations in one go
+                metadata[id] = {};
+                meta_req[id] = { buffer: '', seq: seq };
+                event.server.write(seq + ' GETANNOTATION "*" "' + TYPE_ANNOTATION + '" ("value.priv" "value.shared")\r\n');
+                proxy.serverEmitter.on('ANNOTATION', getAnnotationResponse);
+            }
+            else if (capabilities['METADATA']) {
+                // fetch all folder metadata in one go
+                metadata[id] = {};
+                meta_req[id] = { buffer: '', seq: seq };
+                event.server.write(seq + ' GETMETADATA "*" (/private' + TYPE_ANNOTATION + ' /shared' + TYPE_ANNOTATION +')\r\n');
+                proxy.serverEmitter.on('METADATA', getMetadataResponse);
+            }
+            else {
+                proxy.config.debug_log && console.log("requestMetadata; No CAPABILITIES found (yet?)");
+            }
+        }
+    }
+
     /**
      * Handle OK responses which might have Capabilities appended
      */
@@ -63,6 +89,9 @@ function Mailonly(proxy)
             parseCapabilities(response.lines[0].replace(/\sOK/, '').replace(/\[|\]/i, ''));
             if (capabilities['SORT'] || capabilities['ANNOTATEMORE'] || capabilities['METADATA']) {
                 proxy.serverEmitter.removeListener('OK', OKResponse);
+            }
+            if (capabilities['ANNOTATEMORE'] || capabilities['METADATA']) {
+                requestMetadata(event, 'RMDOK00');
             }
         }
     }
@@ -77,6 +106,9 @@ function Mailonly(proxy)
         if (response.status === 'OK') {
             parseCapabilities(response.lines[0]);
             proxy.serverEmitter.removeListener('OK', OKResponse);
+            if (capabilities['ANNOTATEMORE'] || capabilities['METADATA']) {
+                requestMetadata(event, 'RMDCAP00');
+            }
         }
     }
 
@@ -106,9 +138,16 @@ function Mailonly(proxy)
             return;
         }
 
+        var id = event.state.ID;
+
+        // get metadata if not available
+        if (metadata[id] === undefined || metadata[id] === {}) {
+        requestMetadata(event, 'RMDLIST00');
+        }
+
         // register new LSUB/LIST/XLIST request for this connection
-        if (!proc[event.state.ID]) {
-            proc[event.state.ID] = { buffer:'', listings:{}, pending:0 };
+        if (!proc[id]) {
+            proc[id] = { buffer:'', listings:{}, pending:0 };
         }
 
         var i, req, listing, lines = data.toString().trim().split(/\r?\n/);
@@ -128,44 +167,63 @@ function Mailonly(proxy)
     }
 
     /**
-     * Handler for server responses
+     * Handler for metadata responses
      */
-    function serverResponse(event, data)
+    function getAnnotationResponse(event, data)
     {
         var req, last, response, id = event.state.ID;
 
         // buffering is active for this connection
-        if (req = proc[id]) {
-            event.write = false;  // don't forward to client
+        if (req = meta_req[id]) {
+            event.write = false;  // don't forward data to client
 
             response = imap.parseResponse(data);
             last = response.lines.pop();
 
             // GETANNOTATION completed
-            if (response.seq && req.listings[response.seq] && capabilities['ANNOTATEMORE']) {
+            if ((response.seq === req.seq) && capabilities['ANNOTATEMORE']) {
                 var i, ann, values, lines = (req.buffer + data.toString()).trim().split(/\r?\n/);
                 for (i=0; i < lines.length; i++) {
                     ann = imap.tokenizeData(lines[i], 5);
                     values = ann[4] || [];
-
                     if (metadata[id] === undefined) {
                         metadata[id] = {};
                     }
-
                     // store folder type in global (per-connection) memory for subsequent requests (e.g. XLIST + LSUB)
                     if (ann[1] === 'ANNOTATION' && ann[3] === TYPE_ANNOTATION && values.length) {
                         metadata[id][ann[2]] = (values[1] || values[3] || '').replace(/\..+$/, '');
                     }
                 }
-
-                // clear buffer
-                req.buffer = '';
-
-                // filter buffered listing and send it to client
-                sendFilteredList(id, response.seq, event);
+                // remove listener & request
+                proxy.serverEmitter.removeListener('ANNOTATION', getAnnotationResponse);
+                delete meta_req[id];
             }
+            else {
+                req.buffer += data.toString();
+        // if we got unrelated results, send all buffered data to
+        // client & clean the buffer
+                if ((response.seq != req.seq) && req.buffer) {
+                    event.result = req.buffer;
+                    req.buffer = '';
+                }
+            }
+        }
+    }
+
+    function getMetadataResponse(event, data)
+    {
+        var req, last, response, id = event.state.ID;
+
+        proxy.config.debug_log && console.log("getMetadataResponse called");
+
+        // buffering is active for this connection
+        if (req = meta_req[id]) {
+            event.write = false;  // don't forward to client
+            response = imap.parseResponse(data);
+            last = response.lines.pop();
             // GETMETADATA completed
-            else if (response.seq && req.listings[response.seq] && capabilities['METADATA']) {
+            proxy.config.debug_log && console.log("getMetadataResponse: response.seq = '%s', req.seq = '%s'", response.seq, req.seq);
+            if ((response.seq === req.seq) && capabilities['METADATA']) {
                 var MD_PREFIX = '* METADATA ';
                 var i, j, lines = (req.buffer + data.toString()).trim().split(/\r?\n/);
 
@@ -292,29 +350,51 @@ function Mailonly(proxy)
                         }
                     }
                 }
-
-                // clear buffer
-                req.buffer = '';
-
-                // filter buffered listing and send it to client
-                sendFilteredList(id, response.seq, event);
+                // remove listener & request
+                proxy.serverEmitter.removeListener('METADATA', getAnnotationResponse);
+                delete meta_req[id];
             }
             else {
                 req.buffer += data.toString();
 
-                // command done
-                if (response.seq) {
-                    // pipe through unrelated results
-                    event.write = !processListing(id, response.seq, req.buffer, event);
-
-                    // send all buffered data to client
-                    if (event.write && req.buffer) {
-                        event.result = req.buffer;
-                    }
-
-                    // clear buffer
+        // if we got unrelated results, send all buffered data to
+        // client & clean the buffer
+                if (response.seq != req.seq && req.buffer) {
+                    event.result = req.buffer;
                     req.buffer = '';
                 }
+            }
+        }
+    }
+
+    /**
+     * Handler for server responses
+     */
+    function serverResponse(event, data)
+    {
+        var req, last, response, id = event.state.ID;
+
+        // buffering is active for this connection
+        if (req = proc[id]) {
+            event.write = false;  // don't forward to client
+
+            response = imap.parseResponse(data);
+            last = response.lines.pop();
+
+            req.buffer += data.toString();
+
+            // command done
+            if (response.seq) {
+                // pipe through unrelated results
+                event.write = !processListing(id, response.seq, req.buffer, event);
+
+                // send all buffered data to client
+                if (event.write && req.buffer) {
+                     event.result = req.buffer;
+                }
+
+                // clear buffer
+                req.buffer = '';
             }
         }
     }
@@ -341,20 +421,8 @@ function Mailonly(proxy)
             listing.buffer.push(lines[i]);
         }
 
-        // we already collected all annotations, send the (filtered) response to the client
-        if (metadata[id] !== undefined && metadata[id] !== {}) {
-            sendFilteredList(id, 'A' + seq, event);
-        }
-        else if (capabilities['ANNOTATEMORE']) {
-            // fetch all folder annotations in one go
-            metadata[id] = {};
-            event.server.write('A' + seq + ' GETANNOTATION "*" "' + TYPE_ANNOTATION + '" ("value.priv" "value.shared")\r\n');
-        }
-        else {
-            // fetch all folder metadata in one go
-            metadata[id] = {};
-            event.server.write('A' + seq + ' GETMETADATA "*" (/private' + TYPE_ANNOTATION + ' /shared' + TYPE_ANNOTATION +')\r\n');
-        }
+        // we collected all annotations, send the (filtered) response to the client
+        sendFilteredList(id, 'A' + seq, event);
 
         return true;
     }
