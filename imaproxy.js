@@ -158,21 +158,9 @@ function IMAProxy(config)
 
         connectionToClient.on("data", function(data) {
             var cmd_data = client_buffer + data;
-            var lines = cmd_data.split(/\r?\n/);
-            var ndata = lines.shift();
+            var cmd = parseIMAPCommand(cmd_data);
 
-            // If the line ends with a '}' we have a multiline command
-            if (ndata.slice(-1) === '}') {
-                ndata = data.toString();
-                lines = '';
-            }
-            else {
-                // IMAP commands must end with CRLF
-                ndata += '\r\n';
-            }
-
-            // parse the line received
-            var cmd = parseIMAPCommand(ndata);
+            config.debug_log && console.log(WHITE_CCODE + prefix + "++ Processing command '%s'", cmd.command);
 
             // buffer short inputs leading to split tags (observed with Apple Mail)
             if (!cmd.write) {
@@ -180,28 +168,34 @@ function IMAProxy(config)
                 return;
             }
 
-            // If we only have one command there are no lines left to process
-            if (lines.length === 1 && lines[0] === '') {
-                lines = '';
-            }
+            // Hack to support MUTT: if command is one of 'CAPABILITY',
+            // 'LSUB', 'LIST' or 'XLIST' make sure that there are no more
+            // commands after it on the same client call.
 
-            if (lines.length === 0) {
-                // concatenate buffered string with current data
-                if (client_buffer.length) {
-                    data = Buffer.concat([new Buffer(client_buffer), data]);
-                    client_buffer = '';
-                }
-            }
-            else {
-                // concatenate buffered string with current command
-                if (client_buffer.length) {
-                    data = Buffer.concat([new Buffer(client_buffer),
-                                          new Buffer(ndata)]);
+            // This should be done for all commands received from the client
+            // and when passing the replies back to the user, in fact we
+            // should control the command exchange state on the proxy to avoid
+            // missing commands or parsing commands inside messages.
+
+            var lines = '';
+
+            if (cmd.command === 'CAPABILITY' || cmd.command === 'LSUB'
+                || cmd.command === 'LIST' || cmd.command === 'XLIST') {
+                lines = cmd_data.split(/\r?\n/);
+                var ndata = lines.shift();
+                // If we only have one command there are no lines left to process and we leave data alone
+                if (lines.length === 1 && lines[0] === '') {
+                    lines = '';
                 }
                 else {
-                    data = new Buffer(ndata);
+                    // Send only one command, the following ones will be sent one by one
+                    data = new Buffer(ndata + '\r\n'); 
                 }
-                // we are going to emit a new event with the remaining lines
+            }
+
+            // concatenate buffered string with current data, if needed
+            if (client_buffer.length) {
+                data = Buffer.concat([new Buffer(client_buffer), data]);
                 client_buffer = '';
             }
 
@@ -220,9 +214,10 @@ function IMAProxy(config)
             else if (event.write) {
                 connectionToServer.write(data);
             }
-            // Emit remaining client commands (still unprocessed)
+            // Emit remaining client commands if present
             if (lines.length) {
                 data = new Buffer(lines.join('\r\n'));
+                config.debug_log && console.log(WHITE_CCODE + prefix + "++ Emiting data: '%s'", data.toString());
                 connectionToClient.emit('data', data);
             }
         });
